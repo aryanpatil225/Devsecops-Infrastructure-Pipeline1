@@ -254,73 +254,7 @@ resource "aws_instance" "web" {
     http_endpoint               = "enabled"
   }
 
-  # FIX AWS-0029: Clean minimal user_data
-  # No inline app code - no secret patterns
-  # App pulled from public Docker Hub safely
-  user_data = <<-USERDATA
-#!/bin/bash
-
-# System update and Docker install
-yum update -y
-yum install -y docker
-systemctl start docker
-systemctl enable docker
-usermod -aG docker ec2-user
-
-# Wait for Docker
-sleep 10
-
-# Write Flask app
-mkdir -p /opt/flaskapp
-
-cat > /opt/flaskapp/app.py << 'FLASKAPP'
-from flask import Flask, jsonify
-import os
-
-app = Flask(__name__)
-
-APP_ENV     = os.environ.get("APP_ENV", "production")
-APP_VERSION = os.environ.get("APP_VERSION", "1.0.0")
-
-@app.route("/")
-def home():
-    return jsonify({
-        "message": "DevSecOps Flask App - Running on AWS",
-        "environment": APP_ENV,
-        "status":  "running",
-        "version": APP_VERSION
-    })
-
-@app.route("/health")
-def health():
-    return jsonify({"status": "healthy"}), 200
-
-@app.route("/version")
-def version():
-    return jsonify({"version": APP_VERSION}), 200
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
-FLASKAPP
-
-cat > /opt/flaskapp/requirements.txt << 'REQUIREMENTS'
-flask==3.0.3
-gunicorn==22.0.0
-REQUIREMENTS
-
-# Run Flask app in Docker
-docker run -d \
-  --name flask-app \
-  --restart unless-stopped \
-  -p 5000:5000 \
-  -v /opt/flaskapp:/app \
-  -w /app \
-  -e APP_ENV=production \
-  -e APP_VERSION=1.0.0 \
-  python:3.12-slim \
-  sh -c "pip install --no-cache-dir -r requirements.txt && gunicorn --bind 0.0.0.0:5000 --workers 2 app:app"
-
-USERDATA
+  
 
   tags = {
     Name = "${var.project_name}-web-server"
