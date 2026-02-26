@@ -187,7 +187,7 @@ resource "aws_security_group" "web_sg" {
   description = "Security group for web server - hardened"
   vpc_id      = aws_vpc.main.id
 
-  # HTTP access for web application
+  # HTTP ingress for web application
   ingress {
     description = "HTTP web traffic"
     from_port   = 80
@@ -196,7 +196,7 @@ resource "aws_security_group" "web_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Flask app port
+  # Flask app port ingress
   ingress {
     description = "Flask application"
     from_port   = 5000
@@ -205,34 +205,23 @@ resource "aws_security_group" "web_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # FIXED: SSH rule REMOVED completely
-  # Use AWS SSM Session Manager for server access
-  # No open SSH port = no brute force attack surface
-
-  # FIXED: Egress restricted to HTTP and HTTPS only
-  # BEFORE: protocol -1 to 0.0.0.0/0 (everything)
-  # AFTER:  only ports 80 and 443 allowed outbound
+  # FIXED AWS-0104: Egress restricted to VPC CIDR only
+  # BEFORE: cidr_blocks = ["0.0.0.0/0"] - open to internet
+  # AFTER:  cidr_blocks = [var.vpc_cidr] - VPC internal only
+  # WHY: Prevents compromised server from calling
+  # external attacker endpoints or exfiltrating data
   egress {
-    description = "HTTP outbound"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    description = "HTTPS outbound"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "Internal VPC traffic only"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = [var.vpc_cidr]
   }
 
   tags = {
     Name = "${var.project_name}-web-sg-secured"
   }
 }
-
 
 # ─────────────────────────────────────────────────────
 # IAM ROLE FOR EC2 (SSM ACCESS)
