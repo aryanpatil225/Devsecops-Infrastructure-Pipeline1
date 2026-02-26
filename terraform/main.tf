@@ -257,23 +257,23 @@ resource "aws_instance" "web" {
   # FIX AWS-0029: Clean minimal user_data
   # No inline app code - no secret patterns
   # App pulled from public Docker Hub safely
-  user_data = <<-EOF
+  user_data = <<-USERDATA
 #!/bin/bash
 
-# ── System update ─────────────────────────────
+# System update and Docker install
 yum update -y
 yum install -y docker
 systemctl start docker
 systemctl enable docker
 usermod -aG docker ec2-user
 
-# ── Wait for Docker to be ready ───────────────
+# Wait for Docker
 sleep 10
 
-# ── Write Flask app to disk ───────────────────
+# Write Flask app
 mkdir -p /opt/flaskapp
 
-cat > /opt/flaskapp/app.py << 'PYEOF'
+cat > /opt/flaskapp/app.py << 'FLASKAPP'
 from flask import Flask, jsonify
 import os
 
@@ -301,14 +301,14 @@ def version():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
-PYEOF
+FLASKAPP
 
-cat > /opt/flaskapp/requirements.txt << 'REQEOF'
+cat > /opt/flaskapp/requirements.txt << 'REQUIREMENTS'
 flask==3.0.3
 gunicorn==22.0.0
-REQEOF
+REQUIREMENTS
 
-# ── Run Flask app in Docker ───────────────────
+# Run Flask app in Docker
 docker run -d \
   --name flask-app \
   --restart unless-stopped \
@@ -320,7 +320,7 @@ docker run -d \
   python:3.12-slim \
   sh -c "pip install --no-cache-dir -r requirements.txt && gunicorn --bind 0.0.0.0:5000 --workers 2 app:app"
 
-EOF
+USERDATA
 
   tags = {
     Name = "${var.project_name}-web-server"
