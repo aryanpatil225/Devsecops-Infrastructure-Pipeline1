@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════
-// DEVSECOPS PIPELINE — LIVE VULNERABILITY COUNTER
-// Counts REAL vulnerabilities from actual Trivy scan output
+// DEVSECOPS PIPELINE — LIVE AUTO-UPDATING VULNERABILITY COUNT
+// Uses shell + awk to count from real Trivy JSON output
+// No Python needed — works with pure bash
 // ═══════════════════════════════════════════════════════════
 
 pipeline {
@@ -38,11 +39,11 @@ pipeline {
                     echo "──────────────────────────────────────────"
                     ls -la
                     echo ""
-                    echo "📁 Terraform Files Found:"
+                    echo "📁 Terraform Files:"
                     echo "──────────────────────────────────────────"
                     ls -la terraform/
                     echo ""
-                    echo "✅ Checkout complete"
+                    echo "✅ Stage 1 Complete — Code checked out"
                     echo ""
                 '''
             }
@@ -51,6 +52,8 @@ pipeline {
 
         // ═════════════════════════════════════════
         // STAGE 2: TRIVY LIVE SECURITY SCAN
+        // Counts vulnerabilities dynamically
+        // from real Trivy output — updates on fix
         // ═════════════════════════════════════════
         stage('Stage 2: Trivy IaC Security Scan') {
             steps {
@@ -60,230 +63,276 @@ pipeline {
 
                 sh '''
                     echo ""
-                    echo "🔧 Scanner Details:"
-                    echo "──────────────────────────────────────────"
-                    trivy --version
+                    echo "🔧 Trivy Version: $(trivy --version | head -1)"
                     echo "──────────────────────────────────────────"
                     echo ""
 
-                    echo "══════════════════════════════════════════════════════"
-                    echo "        🔍 SCANNING TERRAFORM DIRECTORY...           "
-                    echo "══════════════════════════════════════════════════════"
-                    echo "  Target    : terraform/"
-                    echo "  Scan Type : IaC Misconfiguration Check"
-                    echo "  Severities: CRITICAL, HIGH, MEDIUM, LOW"
-                    echo "══════════════════════════════════════════════════════"
+                    # ─────────────────────────────────────────
+                    # STEP A: Run Trivy — Table format (human readable)
+                    # This shows exact file + line + description
+                    # ─────────────────────────────────────────
+                    echo "══════════════════════════════════════════════════"
+                    echo "   🔍 SCANNING: terraform/ directory              "
+                    echo "══════════════════════════════════════════════════"
                     echo ""
 
-                    # ─────────────────────────────────────────────────────
-                    # RUN TRIVY — Save output to file AND show in console
-                    # Fixed syntax: trivy config then pipe to tee
-                    # ─────────────────────────────────────────────────────
-                    echo "📋 RAW TRIVY SCAN OUTPUT:"
-                    echo "──────────────────────────────────────────────────────"
-
+                    # Run scan - save output AND show in console
                     trivy config \
                         --severity CRITICAL,HIGH,MEDIUM,LOW \
                         --format table \
                         terraform/ 2>&1 | tee trivy-table-report.txt
 
-                    echo "──────────────────────────────────────────────────────"
+                    echo ""
+                    echo "══════════════════════════════════════════════════"
                     echo ""
 
-                    # ─────────────────────────────────────────────────────
-                    # RUN TRIVY AGAIN in JSON format for counting
-                    # ─────────────────────────────────────────────────────
+                    # ─────────────────────────────────────────
+                    # STEP B: Run Trivy — JSON format (for counting)
+                    # ─────────────────────────────────────────
                     trivy config \
                         --severity CRITICAL,HIGH,MEDIUM,LOW \
                         --format json \
                         terraform/ > trivy-json-report.json 2>/dev/null || true
 
-                    # ─────────────────────────────────────────────────────
-                    # LIVE COUNT — Parse actual JSON output from Trivy
-                    # Uses python3 (available in Jenkins) to parse JSON
-                    # This gives REAL counts from actual scan results
-                    # ─────────────────────────────────────────────────────
-                    echo "══════════════════════════════════════════════════════"
-                    echo "         📊 LIVE VULNERABILITY COUNT                  "
-                    echo "══════════════════════════════════════════════════════"
+                    # ─────────────────────────────────────────
+                    # STEP C: COUNT using grep + awk on JSON
+                    # This is the LIVE count from THIS scan
+                    # When you fix a vuln → count drops automatically
+                    # ─────────────────────────────────────────
 
-                    python3 - << 'PYEOF'
-import json
-import sys
+                    # Count each severity from actual JSON output
+                    CRITICAL_COUNT=$(grep -o '"Severity":"CRITICAL"' trivy-json-report.json 2>/dev/null | wc -l | tr -d ' ')
+                    HIGH_COUNT=$(grep -o '"Severity":"HIGH"' trivy-json-report.json 2>/dev/null | wc -l | tr -d ' ')
+                    MEDIUM_COUNT=$(grep -o '"Severity":"MEDIUM"' trivy-json-report.json 2>/dev/null | wc -l | tr -d ' ')
+                    LOW_COUNT=$(grep -o '"Severity":"LOW"' trivy-json-report.json 2>/dev/null | wc -l | tr -d ' ')
 
-try:
-    with open('trivy-json-report.json', 'r') as f:
-        content = f.read().strip()
-        if not content:
-            print("  ⚠️  No scan output found")
-            sys.exit(0)
-        data = json.loads(content)
-except Exception as e:
-    print(f"  ⚠️  Could not parse report: {e}")
-    sys.exit(0)
+                    # If counts are empty set to 0
+                    CRITICAL_COUNT=${CRITICAL_COUNT:-0}
+                    HIGH_COUNT=${HIGH_COUNT:-0}
+                    MEDIUM_COUNT=${MEDIUM_COUNT:-0}
+                    LOW_COUNT=${LOW_COUNT:-0}
 
-# Count vulnerabilities by severity
-counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0}
-vuln_details = []
+                    TOTAL=$((CRITICAL_COUNT + HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))
 
-results = data.get('Results', [])
+                    # ─────────────────────────────────────────
+                    # STEP D: PRINT LIVE SUMMARY BOX
+                    # This number changes EVERY run based on
+                    # what is actually in your Terraform code
+                    # ─────────────────────────────────────────
+                    echo "══════════════════════════════════════════════════"
+                    echo "         📊 LIVE VULNERABILITY COUNT              "
+                    echo "         (Updates automatically each run)         "
+                    echo "══════════════════════════════════════════════════"
+                    echo ""
+                    echo "  ┌────────────────────────────────────────────┐"
+                    printf "  │  %-10s TOTAL ISSUES FOUND : %-6s      │\n" "" "$TOTAL"
+                    echo "  ├────────────────────────────────────────────┤"
+                    printf "  │  🔴 CRITICAL  : %-3s issues               │\n" "$CRITICAL_COUNT"
+                    printf "  │  🟠 HIGH      : %-3s issues               │\n" "$HIGH_COUNT"
+                    printf "  │  🟡 MEDIUM    : %-3s issues               │\n" "$MEDIUM_COUNT"
+                    printf "  │  🔵 LOW       : %-3s issues               │\n" "$LOW_COUNT"
+                    echo "  └────────────────────────────────────────────┘"
+                    echo ""
 
-for result in results:
-    misconfigs = result.get('Misconfigurations', [])
-    filename = result.get('Target', 'unknown')
+                    # ─────────────────────────────────────────
+                    # STEP E: SHOW EACH VULNERABILITY DETAIL
+                    # Parsed directly from the table report above
+                    # Only shows what currently EXISTS in code
+                    # ─────────────────────────────────────────
+                    echo "══════════════════════════════════════════════════"
+                    echo "    📁 VULNERABILITIES BY FILE & LINE NUMBER      "
+                    echo "══════════════════════════════════════════════════"
+                    echo ""
 
-    for m in misconfigs:
-        severity = m.get('Severity', 'UNKNOWN').upper()
-        if severity in counts:
-            counts[severity] += 1
+                    # Extract and display from the table report
+                    # Show AWS ID, severity, file, line number
+                    if grep -q "CRITICAL\|HIGH\|MEDIUM\|LOW" trivy-table-report.txt 2>/dev/null; then
 
-        vuln_details.append({
-            'severity': severity,
-            'id':       m.get('ID', 'N/A'),
-            'title':    m.get('Title', 'N/A'),
-            'desc':     m.get('Description', 'N/A'),
-            'file':     filename,
-            'resource': m.get('CauseMetadata', {}).get('Resource', 'N/A'),
-            'startline': m.get('CauseMetadata', {}).get('StartLine', 'N/A'),
-            'endline':   m.get('CauseMetadata', {}).get('EndLine', 'N/A'),
-            'resolution': m.get('Resolution', 'N/A'),
-        })
+                        # Show CRITICAL issues with details
+                        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+                            echo "  🔴 CRITICAL ISSUES ($CRITICAL_COUNT found):"
+                            echo "  ──────────────────────────────────────────────"
+                            grep -A2 "(CRITICAL)" trivy-table-report.txt 2>/dev/null | \
+                                grep -v "^--$" | \
+                                sed 's/^/  /' || true
+                            echo ""
+                        fi
 
-total = sum(counts.values())
+                        # Show HIGH issues with details
+                        if [ "$HIGH_COUNT" -gt 0 ]; then
+                            echo "  🟠 HIGH ISSUES ($HIGH_COUNT found):"
+                            echo "  ──────────────────────────────────────────────"
+                            grep -A2 "(HIGH)" trivy-table-report.txt 2>/dev/null | \
+                                grep -v "^--$" | \
+                                sed 's/^/  /' || true
+                            echo ""
+                        fi
 
-# ── SUMMARY BOX ──────────────────────────────────────
-print("")
-print("  ┌──────────────────────────────────────────────┐")
-print(f"  │   TOTAL VULNERABILITIES FOUND  :  {total:<10}  │")
-print("  ├──────────────────────────────────────────────┤")
+                        # Show MEDIUM issues with details
+                        if [ "$MEDIUM_COUNT" -gt 0 ]; then
+                            echo "  🟡 MEDIUM ISSUES ($MEDIUM_COUNT found):"
+                            echo "  ──────────────────────────────────────────────"
+                            grep -A2 "(MEDIUM)" trivy-table-report.txt 2>/dev/null | \
+                                grep -v "^--$" | \
+                                sed 's/^/  /' || true
+                            echo ""
+                        fi
 
-icon = {'CRITICAL': '🔴', 'HIGH': '🟠', 'MEDIUM': '🟡', 'LOW': '🔵'}
-for sev in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
-    c = counts[sev]
-    bar = '█' * c if c > 0 else '░ none'
-    print(f"  │  {icon[sev]} {sev:<8} : {c}  {bar:<20}  │")
+                        # Show LOW issues
+                        if [ "$LOW_COUNT" -gt 0 ]; then
+                            echo "  🔵 LOW ISSUES ($LOW_COUNT found):"
+                            echo "  ──────────────────────────────────────────────"
+                            grep -A2 "(LOW)" trivy-table-report.txt 2>/dev/null | \
+                                grep -v "^--$" | \
+                                sed 's/^/  /' || true
+                            echo ""
+                        fi
 
-print("  └──────────────────────────────────────────────┘")
-print("")
-
-if total == 0:
-    print("  ✅ ZERO vulnerabilities found!")
-    print("  🟢 Infrastructure is SECURE")
-    sys.exit(0)
-
-# ── DETAILED BREAKDOWN ───────────────────────────────
-print("══════════════════════════════════════════════════════")
-print("       📁 DETAILED VULNERABILITY BREAKDOWN            ")
-print("══════════════════════════════════════════════════════")
-
-sev_order = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
-num = 1
-
-for sev in sev_order:
-    sev_vulns = [v for v in vuln_details if v['severity'] == sev]
-    if not sev_vulns:
-        continue
-
-    ico = icon[sev]
-    print(f"\n  {ico} {sev} VULNERABILITIES ({len(sev_vulns)} found)")
-    print("  " + "─" * 60)
-
-    for v in sev_vulns:
-        print(f"\n  [{num}] {ico} {v['severity']} — {v['id']}")
-        print(f"  ┌─────────────────────────────────────────────────────")
-        print(f"  │  Title     : {v['title']}")
-        print(f"  │  File      : {v['file']}")
-        print(f"  │  Resource  : {v['resource']}")
-        print(f"  │  Lines     : {v['startline']} → {v['endline']}")
-        print(f"  │  Problem   : {v['desc'][:80]}")
-        print(f"  │  Fix       : {v['resolution'][:80]}")
-        print(f"  └─────────────────────────────────────────────────────")
-        num += 1
-
-# ── REMEDIATION STEPS ────────────────────────────────
-print("")
-print("══════════════════════════════════════════════════════")
-print("              🔧 REMEDIATION STEPS                    ")
-print("══════════════════════════════════════════════════════")
-print("")
-print("  Follow these steps to fix vulnerabilities:")
-print("")
-
-step = 1
-for sev in sev_order:
-    sev_vulns = [v for v in vuln_details if v['severity'] == sev]
-    for v in sev_vulns:
-        print(f"  STEP {step}: Fix {v['severity']} — {v['id']}")
-        print(f"    File    : {v['file']}")
-        print(f"    Lines   : {v['startline']} to {v['endline']}")
-        print(f"    Action  : {v['resolution'][:70]}")
-        print("")
-        step += 1
-
-print("  After fixing:")
-print("  1. git add terraform/main.tf")
-print("  2. git commit -m 'Fix: Remediate security vulnerabilities'")
-print("  3. git push origin main")
-print("  4. Re-run this Jenkins pipeline")
-print("  5. Confirm TOTAL = 0")
-print("")
-
-# ── SAVE COUNTS FOR SHELL ────────────────────────────
-with open('vuln_counts.txt', 'w') as f:
-    for sev, c in counts.items():
-        f.write(f"{sev}={c}\\n")
-
-PYEOF
-
-                    # ─────────────────────────────────────────────────────
-                    # READ COUNTS and make PASS/FAIL decision
-                    # ─────────────────────────────────────────────────────
-                    echo "══════════════════════════════════════════════════════"
-                    echo "              ⚖️  PIPELINE DECISION                   "
-                    echo "══════════════════════════════════════════════════════"
-
-                    # Read critical count from file written by python
-                    if [ -f vuln_counts.txt ]; then
-                        CRITICAL_COUNT=$(grep "^CRITICAL=" vuln_counts.txt | cut -d= -f2 | tr -d '[:space:]')
-                        HIGH_COUNT=$(grep "^HIGH=" vuln_counts.txt | cut -d= -f2 | tr -d '[:space:]')
-                        MEDIUM_COUNT=$(grep "^MEDIUM=" vuln_counts.txt | cut -d= -f2 | tr -d '[:space:]')
-                        LOW_COUNT=$(grep "^LOW=" vuln_counts.txt | cut -d= -f2 | tr -d '[:space:]')
                     else
-                        CRITICAL_COUNT=0
-                        HIGH_COUNT=0
-                        MEDIUM_COUNT=0
-                        LOW_COUNT=0
+                        echo "  ✅ No vulnerabilities found in any file!"
                     fi
 
-                    echo ""
-                    echo "  Live Count at Decision Point:"
-                    echo "  🔴 CRITICAL : ${CRITICAL_COUNT}"
-                    echo "  🟠 HIGH     : ${HIGH_COUNT}"
-                    echo "  🟡 MEDIUM   : ${MEDIUM_COUNT}"
-                    echo "  🔵 LOW      : ${LOW_COUNT}"
+                    # ─────────────────────────────────────────
+                    # STEP F: SHOW EXACT FILE + LINE REFERENCES
+                    # So developer knows EXACTLY what to fix
+                    # ─────────────────────────────────────────
+                    echo "══════════════════════════════════════════════════"
+                    echo "    📍 EXACT LOCATION OF VULNERABLE CODE          "
+                    echo "══════════════════════════════════════════════════"
                     echo ""
 
-                    if [ "${CRITICAL_COUNT}" -gt "0" ] 2>/dev/null; then
-                        echo "  ╔══════════════════════════════════════════════════╗"
-                        echo "  ║  ❌ BUILD FAILED                                 ║"
-                        echo "  ║  Reason : ${CRITICAL_COUNT} CRITICAL issue(s) detected    ║"
-                        echo "  ║  Policy : Zero CRITICAL tolerance enforced       ║"
-                        echo "  ║  Action : Fix issues shown above, then re-push   ║"
-                        echo "  ╚══════════════════════════════════════════════════╝"
+                    # Extract file:line references from report
+                    grep -E "main\.tf:[0-9]+" trivy-table-report.txt 2>/dev/null | \
+                        sort -u | \
+                        sed 's/^/  📄 /' || true
+
+                    echo ""
+
+                    # ─────────────────────────────────────────
+                    # STEP G: REMEDIATION GUIDE
+                    # Shows only for issues that still exist
+                    # ─────────────────────────────────────────
+                    if [ "$TOTAL" -gt 0 ]; then
+                        echo "══════════════════════════════════════════════════"
+                        echo "    🔧 HOW TO FIX — REMEDIATION GUIDE            "
+                        echo "══════════════════════════════════════════════════"
+                        echo ""
+
+                        if grep -q "AWS-0029\|sensitive data\|user.data" trivy-table-report.txt 2>/dev/null; then
+                            echo "  🔴 FIX CRITICAL: Sensitive data in user_data"
+                            echo "     File   : terraform/main.tf"
+                            echo "     Problem: Credentials/secrets found in user_data block"
+                            echo "     Fix    : Remove all secrets from user_data"
+                            echo "              Use IAM roles instead of hardcoded keys"
+                            echo ""
+                        fi
+
+                        if grep -q "AWS-0104\|egress\|unrestricted egress" trivy-table-report.txt 2>/dev/null; then
+                            echo "  🔴 FIX CRITICAL: Unrestricted outbound traffic"
+                            echo "     File   : terraform/main.tf"
+                            echo "     Problem: egress cidr_blocks = [\"0.0.0.0/0\"]"
+                            echo "     Fix    : Restrict egress to specific ports/IPs"
+                            echo '             cidr_blocks = ["10.0.0.0/16"]'
+                            echo ""
+                        fi
+
+                        if grep -q "AWS-0107\|SSH\|unrestricted ingress" trivy-table-report.txt 2>/dev/null; then
+                            echo "  🟠 FIX HIGH: SSH open to entire internet"
+                            echo "     File   : terraform/main.tf line ~169"
+                            echo "     Problem: ingress port 22 cidr_blocks = [\"0.0.0.0/0\"]"
+                            echo "     Fix    : Remove SSH ingress rule entirely"
+                            echo "              Use AWS Systems Manager Session Manager instead"
+                            echo ""
+                        fi
+
+                        if grep -q "AWS-0131\|encrypted.*false\|not encrypted" trivy-table-report.txt 2>/dev/null; then
+                            echo "  🟠 FIX HIGH: EBS volume not encrypted"
+                            echo "     File   : terraform/main.tf line ~231"
+                            echo "     Problem: encrypted = false"
+                            echo "     Fix    : encrypted = true"
+                            echo ""
+                        fi
+
+                        if grep -q "AWS-0028\|IMDS\|metadata" trivy-table-report.txt 2>/dev/null; then
+                            echo "  🟠 FIX HIGH: IMDSv2 not enforced"
+                            echo "     File   : terraform/main.tf (aws_instance block)"
+                            echo "     Problem: metadata_options not configured"
+                            echo "     Fix    : Add inside aws_instance resource:"
+                            echo "              metadata_options {"
+                            echo "                http_tokens = \"required\""
+                            echo "              }"
+                            echo ""
+                        fi
+
+                        if grep -q "AWS-0164\|public IP\|map_public_ip" trivy-table-report.txt 2>/dev/null; then
+                            echo "  🟠 FIX HIGH: Subnet auto-assigns public IPs"
+                            echo "     File   : terraform/main.tf line ~94"
+                            echo "     Problem: map_public_ip_on_launch = true"
+                            echo "     Fix    : map_public_ip_on_launch = false"
+                            echo ""
+                        fi
+
+                        if grep -q "AWS-0178\|Flow Logs\|flow logs" trivy-table-report.txt 2>/dev/null; then
+                            echo "  🟡 FIX MEDIUM: VPC Flow Logs not enabled"
+                            echo "     File   : terraform/main.tf (aws_vpc block)"
+                            echo "     Problem: No aws_flow_log resource defined"
+                            echo "     Fix    : Add aws_flow_log resource to main.tf"
+                            echo ""
+                        fi
+
+                        echo "  ──────────────────────────────────────────────"
+                        echo "  📌 After fixing, run these commands:"
+                        echo "     git add terraform/main.tf"
+                        echo "     git commit -m 'Fix: Remediate security vulnerabilities'"
+                        echo "     git push origin main"
+                        echo "  Then re-run this pipeline to verify count = 0"
+                        echo ""
+                    fi
+
+                    # ─────────────────────────────────────────
+                    # STEP H: FINAL PASS / FAIL DECISION
+                    # Based on LIVE count from THIS scan
+                    # ─────────────────────────────────────────
+                    echo "══════════════════════════════════════════════════"
+                    echo "              ⚖️  PIPELINE DECISION               "
+                    echo "══════════════════════════════════════════════════"
+                    echo ""
+
+                    if [ "$CRITICAL_COUNT" -gt 0 ]; then
+                        echo "  ❌ STATUS  : FAILED"
+                        echo "  📊 REASON  : $CRITICAL_COUNT CRITICAL issue(s) detected"
+                        echo "  🔒 POLICY  : Zero CRITICAL tolerance"
+                        echo "  📋 ACTION  : Fix CRITICAL issues listed above"
+                        echo ""
+                        echo "  ╔══════════════════════════════════════════════╗"
+                        echo "  ║  ❌ BUILD FAILED — DO NOT DEPLOY             ║"
+                        echo "  ║  $CRITICAL_COUNT CRITICAL + $HIGH_COUNT HIGH + $MEDIUM_COUNT MEDIUM + $LOW_COUNT LOW issues   ║"
+                        echo "  ╚══════════════════════════════════════════════╝"
                         exit 1
+                    elif [ "$HIGH_COUNT" -gt 0 ]; then
+                        echo "  ⚠️  STATUS  : WARNING"
+                        echo "  📊 REASON  : $HIGH_COUNT HIGH issue(s) detected (no CRITICAL)"
+                        echo "  🔒 POLICY  : HIGH issues should be fixed before production"
+                        echo ""
+                        echo "  ╔══════════════════════════════════════════════╗"
+                        echo "  ║  ⚠️  BUILD PASSED WITH WARNINGS              ║"
+                        echo "  ║  Fix HIGH issues before production deploy    ║"
+                        echo "  ╚══════════════════════════════════════════════╝"
                     else
-                        echo "  ╔══════════════════════════════════════════════════╗"
-                        echo "  ║  ✅ SCAN PASSED                                  ║"
-                        echo "  ║  Result : Zero CRITICAL vulnerabilities found    ║"
-                        echo "  ║  Status : Safe to proceed to Terraform Plan      ║"
-                        echo "  ╚══════════════════════════════════════════════════╝"
+                        echo "  ✅ STATUS  : PASSED"
+                        echo "  📊 REASON  : Zero CRITICAL issues found"
+                        echo "  🔒 POLICY  : Security requirements met"
+                        echo ""
+                        echo "  ╔══════════════════════════════════════════════╗"
+                        echo "  ║  ✅ BUILD PASSED — SAFE TO DEPLOY            ║"
+                        echo "  ║  Total remaining: $TOTAL issue(s)           ║"
+                        echo "  ╚══════════════════════════════════════════════╝"
                     fi
                 '''
             }
 
             post {
                 always {
-                    sh 'ls -la trivy-*.txt trivy-*.json vuln_counts.txt 2>/dev/null || true'
                     archiveArtifacts artifacts: 'trivy-table-report.txt',
                                      allowEmptyArchive: true
                     archiveArtifacts artifacts: 'trivy-json-report.json',
@@ -291,10 +340,10 @@ PYEOF
                 }
                 failure {
                     echo '❌ SCAN FAILED — Fix vulnerabilities listed above'
-                    echo '📋 Use AI to analyze and remediate terraform/main.tf'
+                    echo '🤖 Use AI to analyze and fix terraform/main.tf'
                 }
                 success {
-                    echo '✅ SCAN PASSED — Zero CRITICAL vulnerabilities!'
+                    echo '✅ SCAN PASSED!'
                 }
             }
         }
@@ -302,7 +351,7 @@ PYEOF
 
         // ═════════════════════════════════════════
         // STAGE 3: TERRAFORM PLAN
-        // Only runs if Trivy scan passes
+        // Only runs if Stage 2 passes
         // ═════════════════════════════════════════
         stage('Stage 3: Terraform Plan') {
             steps {
@@ -332,18 +381,7 @@ PYEOF
 
                     echo ""
                     echo "✅ Terraform plan complete!"
-                    echo "──────────────────────────────────────────"
-                    echo "  Run terraform apply to deploy to AWS"
                 '''
-            }
-
-            post {
-                success {
-                    echo '✅ Terraform plan successful!'
-                }
-                failure {
-                    echo '❌ Terraform plan failed — check AWS credentials'
-                }
             }
         }
     }
@@ -359,7 +397,7 @@ PYEOF
             ║   Stage 2: Trivy Security Scan ✅  Zero Criticals    ║
             ║   Stage 3: Terraform Plan      ✅                    ║
             ║                                                      ║
-            ║   Infrastructure is SECURE and READY TO DEPLOY!     ║
+            ║   Infrastructure SECURE — Ready to deploy!          ║
             ╚══════════════════════════════════════════════════════╝
             '''
         }
@@ -368,22 +406,22 @@ PYEOF
             ╔══════════════════════════════════════════════════════╗
             ║          ❌ PIPELINE FAILED                          ║
             ║                                                      ║
-            ║   NEXT STEPS:                                        ║
-            ║   1. Read vulnerability details in Stage 2 above     ║
-            ║   2. Note exact file + line numbers shown            ║
-            ║   3. Use AI to fix terraform/main.tf                 ║
-            ║   4. git add . && git commit && git push             ║
-            ║   5. Re-run pipeline                                 ║
-            ║   6. Verify TOTAL count = 0                          ║
+            ║   WHAT TO DO NOW:                                    ║
+            ║   1. Look at Stage 2 output above                    ║
+            ║   2. Find the LIVE count box                         ║
+            ║   3. Read exact file + line of each issue            ║
+            ║   4. Fix terraform/main.tf in VS Code                ║
+            ║   5. git add . && git commit && git push             ║
+            ║   6. Re-run → count will update automatically        ║
             ╚══════════════════════════════════════════════════════╝
             '''
         }
         always {
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  Build Number : ${env.BUILD_NUMBER}"
-            echo "  Job Name     : ${env.JOB_NAME}"
-            echo "  Result       : ${currentBuild.currentResult}"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Build   : #${env.BUILD_NUMBER}"
+            echo "  Job     : ${env.JOB_NAME}"
+            echo "  Result  : ${currentBuild.currentResult}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         }
     }
 }
