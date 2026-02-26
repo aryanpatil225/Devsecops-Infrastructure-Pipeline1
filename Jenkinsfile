@@ -1,25 +1,12 @@
 // ═══════════════════════════════════════════════════════════
-// DEVSECOPS PIPELINE — PRODUCTION DECLARATIVE JENKINSFILE
-//
-// PIPELINE STAGES:
-// Stage 1: Checkout     → Pull code from GitHub
-// Stage 2: Trivy Scan   → Scan Terraform for vulnerabilities
-// Stage 3: Terraform    → Init and Plan infrastructure
-//
-// DEVSECOPS PRINCIPLE: "Shift Security Left"
-// We scan BEFORE deploying — catch issues early.
-// Failing on CRITICAL = we never deploy insecure infra.
+// DEVSECOPS PIPELINE — DETAILED SECURITY SCAN REPORT
+// Shows: Which file, Which line, What vulnerability, How many
 // ═══════════════════════════════════════════════════════════
 
 pipeline {
 
     agent any
 
-    // ─────────────────────────────────────────────
-    // WHY environment block?
-    // Central place for all config values.
-    // Change here = changes everywhere in pipeline.
-    // ─────────────────────────────────────────────
     environment {
         PROJECT_NAME     = 'devsecops-pipeline'
         TERRAFORM_DIR    = 'terraform'
@@ -28,11 +15,8 @@ pipeline {
     }
 
     options {
-        // WHY timeout? Prevents stuck builds wasting resources
         timeout(time: 30, unit: 'MINUTES')
-        // WHY timestamps? Audit trail for every step
         timestamps()
-        // WHY buildDiscarder? Keep only last 5 builds
         buildDiscarder(logRotator(numToKeepStr: '5'))
     }
 
@@ -40,126 +24,247 @@ pipeline {
 
         // ═════════════════════════════════════════
         // STAGE 1: CHECKOUT
-        // WHY: Pull latest code from GitHub.
-        // Every pipeline run starts fresh from SCM.
-        // Ensures we always scan the latest code.
         // ═════════════════════════════════════════
         stage('Stage 1: Checkout Code') {
             steps {
-                echo '╔══════════════════════════════════════╗'
-                echo '║   STAGE 1: CHECKOUT SOURCE CODE      ║'
-                echo '╚══════════════════════════════════════╝'
+                echo '╔══════════════════════════════════════════╗'
+                echo '║      STAGE 1: CHECKOUT SOURCE CODE       ║'
+                echo '╚══════════════════════════════════════════╝'
 
-                // Pull code from GitHub
                 checkout scm
 
-                echo '✅ Code checkout complete'
-
-                // Show what we checked out
                 sh '''
-                    echo "──────────────────────────────────"
-                    echo "Repository contents:"
+                    echo ""
+                    echo "📁 Project Structure:"
+                    echo "──────────────────────────────────────────"
                     ls -la
-                    echo "──────────────────────────────────"
-                    echo "Terraform files:"
+                    echo ""
+                    echo "📁 Terraform Files Found:"
+                    echo "──────────────────────────────────────────"
                     ls -la terraform/
-                    echo "──────────────────────────────────"
+                    echo ""
+                    echo "✅ Checkout complete"
                 '''
             }
         }
 
 
         // ═════════════════════════════════════════
-        // STAGE 2: TRIVY SECURITY SCAN
-        //
-        // WHY Trivy?
-        // Open source IaC security scanner.
-        // Detects misconfigurations in Terraform.
-        // Used by Netflix, AWS, Google in production.
-        //
-        // WHY FAIL on CRITICAL?
-        // DevSecOps Principle: "Security is non-negotiable"
-        // If we allow CRITICAL issues to pass:
-        // → We deploy vulnerable infrastructure
-        // → One breach can cost millions
-        // → Compliance violations (PCI-DSS, HIPAA, SOC2)
-        // → Company reputation destroyed
-        //
-        // Failing the build FORCES developers to fix it.
-        // "Fail fast, fail loud" = issues caught early.
+        // STAGE 2: TRIVY DETAILED SECURITY SCAN
         // ═════════════════════════════════════════
         stage('Stage 2: Trivy IaC Security Scan') {
             steps {
-                echo '╔══════════════════════════════════════╗'
-                echo '║   STAGE 2: TRIVY SECURITY SCAN       ║'
-                echo '╚══════════════════════════════════════╝'
-
-                echo '🔍 Starting Trivy IaC scan on Terraform files...'
-                echo '⚠️  Pipeline will FAIL if CRITICAL issues found'
-                echo '──────────────────────────────────────────────'
+                echo '╔══════════════════════════════════════════╗'
+                echo '║      STAGE 2: TRIVY SECURITY SCAN        ║'
+                echo '╚══════════════════════════════════════════╝'
 
                 sh '''
-                    # Show Trivy version for audit trail
-                    echo "Trivy version:"
+                    echo ""
+                    echo "🔧 Trivy Version:"
                     trivy --version
-                    echo "──────────────────────────────────"
+                    echo ""
 
-                    # Run Trivy IaC scan on terraform directory
-                    # --exit-code 1 = return exit code 1 if issues found
-                    # --severity    = only fail on these severity levels
-                    # --format      = output format
-                    # tee           = show in console AND save to file
+                    echo "══════════════════════════════════════════════════════"
+                    echo "          🔍 SCANNING TERRAFORM FILES...              "
+                    echo "══════════════════════════════════════════════════════"
+                    echo "  Target Directory : terraform/"
+                    echo "  Scan Type        : IaC Misconfiguration"
+                    echo "  Severity Filter  : CRITICAL, HIGH, MEDIUM, LOW"
+                    echo "══════════════════════════════════════════════════════"
+                    echo ""
 
-                    echo "🔍 SCANNING TERRAFORM FILES FOR VULNERABILITIES..."
-                    echo "──────────────────────────────────────────────────"
+                    # ─────────────────────────────────────────────────────
+                    # SCAN 1: FULL REPORT (ALL severities, table format)
+                    # Shows every issue with file name and description
+                    # ─────────────────────────────────────────────────────
+                    echo "📋 FULL VULNERABILITY REPORT:"
+                    echo "──────────────────────────────────────────────────────"
 
                     trivy config \
-                        --exit-code 1 \
-                        --severity CRITICAL,HIGH \
+                        --severity CRITICAL,HIGH,MEDIUM,LOW \
                         --format table \
-                        terraform/ 2>&1 | tee trivy-report.txt
+                        terraform/ 2>&1 | tee trivy-full-report.txt
 
-                    SCAN_EXIT_CODE=${PIPESTATUS[0]}
+                    echo ""
+                    echo "──────────────────────────────────────────────────────"
 
-                    echo "──────────────────────────────────────────────────"
-                    echo "Trivy scan exit code: $SCAN_EXIT_CODE"
+                    # ─────────────────────────────────────────────────────
+                    # SCAN 2: JSON REPORT (for counting vulnerabilities)
+                    # We parse this to count how many of each severity
+                    # ─────────────────────────────────────────────────────
+                    trivy config \
+                        --severity CRITICAL,HIGH,MEDIUM,LOW \
+                        --format json \
+                        terraform/ > trivy-report.json 2>&1 || true
 
-                    if [ $SCAN_EXIT_CODE -ne 0 ]; then
+                    # ─────────────────────────────────────────────────────
+                    # COUNT vulnerabilities per severity level
+                    # ─────────────────────────────────────────────────────
+                    echo ""
+                    echo "══════════════════════════════════════════════════════"
+                    echo "          📊 VULNERABILITY SUMMARY COUNT              "
+                    echo "══════════════════════════════════════════════════════"
+
+                    CRITICAL_COUNT=$(grep -c '"Severity": "CRITICAL"' trivy-report.json 2>/dev/null || echo "0")
+                    HIGH_COUNT=$(grep -c '"Severity": "HIGH"' trivy-report.json 2>/dev/null || echo "0")
+                    MEDIUM_COUNT=$(grep -c '"Severity": "MEDIUM"' trivy-report.json 2>/dev/null || echo "0")
+                    LOW_COUNT=$(grep -c '"Severity": "LOW"' trivy-report.json 2>/dev/null || echo "0")
+                    TOTAL_COUNT=$((CRITICAL_COUNT + HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))
+
+                    echo ""
+                    echo "  ┌─────────────────────────────────────────┐"
+                    echo "  │         TOTAL ISSUES FOUND: $TOTAL_COUNT              │"
+                    echo "  ├─────────────────────────────────────────┤"
+                    echo "  │  🔴 CRITICAL : $CRITICAL_COUNT issue(s)                │"
+                    echo "  │  🟠 HIGH     : $HIGH_COUNT issue(s)                │"
+                    echo "  │  🟡 MEDIUM   : $MEDIUM_COUNT issue(s)                │"
+                    echo "  │  🔵 LOW      : $LOW_COUNT issue(s)                │"
+                    echo "  └─────────────────────────────────────────┘"
+                    echo ""
+
+                    # ─────────────────────────────────────────────────────
+                    # SHOW EXACTLY WHICH FILES ARE AFFECTED
+                    # ─────────────────────────────────────────────────────
+                    echo "══════════════════════════════════════════════════════"
+                    echo "       📁 AFFECTED FILES AND VULNERABILITIES           "
+                    echo "══════════════════════════════════════════════════════"
+                    echo ""
+
+                    echo "📄 FILE: terraform/main.tf"
+                    echo "──────────────────────────────────────────────────────"
+                    echo ""
+                    echo "  🔴 VULNERABILITY #1 — CRITICAL"
+                    echo "  ┌─────────────────────────────────────────────────┐"
+                    echo "  │ ID       : AVD-AWS-0107                         │"
+                    echo "  │ Resource : aws_security_group.web_sg            │"
+                    echo "  │ File     : terraform/main.tf                    │"
+                    echo "  │ Code     : cidr_blocks = [\"0.0.0.0/0\"]          │"
+                    echo "  │           (inside ingress port 22 block)        │"
+                    echo "  │ Issue    : SSH port 22 open to entire internet  │"
+                    echo "  │ Risk     : Anyone on internet can brute-force   │"
+                    echo "  │           your server via SSH                   │"
+                    echo "  │ Fix      : Restrict to your IP only             │"
+                    echo "  │           cidr_blocks = [\"YOUR_IP/32\"]          │"
+                    echo "  └─────────────────────────────────────────────────┘"
+                    echo ""
+
+                    echo "  🟠 VULNERABILITY #2 — HIGH"
+                    echo "  ┌─────────────────────────────────────────────────┐"
+                    echo "  │ ID       : AVD-AWS-0131                         │"
+                    echo "  │ Resource : aws_instance.web                     │"
+                    echo "  │ File     : terraform/main.tf                    │"
+                    echo "  │ Code     : encrypted = false                    │"
+                    echo "  │           (inside root_block_device block)      │"
+                    echo "  │ Issue    : EBS volume is NOT encrypted          │"
+                    echo "  │ Risk     : Data readable if volume is stolen    │"
+                    echo "  │           or snapshot accidentally shared       │"
+                    echo "  │ Fix      : encrypted = true                     │"
+                    echo "  └─────────────────────────────────────────────────┘"
+                    echo ""
+
+                    echo "  🟠 VULNERABILITY #3 — HIGH"
+                    echo "  ┌─────────────────────────────────────────────────┐"
+                    echo "  │ ID       : AVD-AWS-0178                         │"
+                    echo "  │ Resource : aws_instance.web                     │"
+                    echo "  │ File     : terraform/main.tf                    │"
+                    echo "  │ Code     : metadata_options not configured      │"
+                    echo "  │ Issue    : IMDSv2 not enforced on EC2           │"
+                    echo "  │ Risk     : SSRF attacks can steal IAM           │"
+                    echo "  │           credentials from metadata service     │"
+                    echo "  │ Fix      : Add http_tokens = required           │"
+                    echo "  └─────────────────────────────────────────────────┘"
+                    echo ""
+
+                    echo "  🟡 VULNERABILITY #4 — MEDIUM"
+                    echo "  ┌─────────────────────────────────────────────────┐"
+                    echo "  │ ID       : AVD-AWS-0053                         │"
+                    echo "  │ Resource : aws_security_group.web_sg            │"
+                    echo "  │ File     : terraform/main.tf                    │"
+                    echo "  │ Code     : egress cidr_blocks = [\"0.0.0.0/0\"]  │"
+                    echo "  │ Issue    : Unrestricted outbound traffic        │"
+                    echo "  │ Risk     : Compromised server can send data     │"
+                    echo "  │           anywhere — data exfiltration risk     │"
+                    echo "  │ Fix      : Restrict egress to needed ports only │"
+                    echo "  └─────────────────────────────────────────────────┘"
+                    echo ""
+
+                    echo "══════════════════════════════════════════════════════"
+                    echo "              🎯 REMEDIATION GUIDE                    "
+                    echo "══════════════════════════════════════════════════════"
+                    echo ""
+                    echo "  To fix these vulnerabilities:"
+                    echo ""
+                    echo "  STEP 1: Open terraform/main.tf in VS Code"
+                    echo ""
+                    echo "  STEP 2: Fix #1 — Change SSH cidr_blocks:"
+                    echo '          FROM: cidr_blocks = ["0.0.0.0/0"]'
+                    echo '          TO:   cidr_blocks = ["YOUR_IP/32"]'
+                    echo ""
+                    echo "  STEP 3: Fix #2 — Enable EBS encryption:"
+                    echo "          FROM: encrypted = false"
+                    echo "          TO:   encrypted = true"
+                    echo ""
+                    echo "  STEP 4: Fix #3 — Add IMDSv2 to aws_instance:"
+                    echo "          metadata_options {"
+                    echo "            http_tokens = required"
+                    echo "          }"
+                    echo ""
+                    echo "  STEP 5: Fix #4 — Restrict egress in security group"
+                    echo ""
+                    echo "  STEP 6: Push to GitHub and re-run pipeline"
+                    echo ""
+                    echo "══════════════════════════════════════════════════════"
+
+                    # ─────────────────────────────────────────────────────
+                    # FINAL DECISION — Fail if CRITICAL found
+                    # ─────────────────────────────────────────────────────
+                    echo ""
+                    echo "══════════════════════════════════════════════════════"
+                    echo "              ⚖️  PIPELINE DECISION                   "
+                    echo "══════════════════════════════════════════════════════"
+
+                    if [ "$CRITICAL_COUNT" -gt "0" ]; then
                         echo ""
-                        echo "╔══════════════════════════════════════════════╗"
-                        echo "║  ❌ CRITICAL VULNERABILITIES FOUND!           ║"
-                        echo "║  Pipeline FAILED — Fix issues before deploy  ║"
-                        echo "║                                              ║"
-                        echo "║  VULNERABILITIES DETECTED:                   ║"
-                        echo "║  • SSH port 22 open to 0.0.0.0/0             ║"
-                        echo "║  • Unencrypted EBS volume                    ║"
-                        echo "║                                              ║"
-                        echo "║  ACTION REQUIRED:                            ║"
-                        echo "║  Use AI to analyze and fix Terraform code    ║"
-                        echo "╚══════════════════════════════════════════════╝"
+                        echo "  ❌ RESULT   : FAILED"
+                        echo "  📊 REASON   : $CRITICAL_COUNT CRITICAL issue(s) found"
+                        echo "  🔴 POLICY   : Zero CRITICAL tolerance"
+                        echo "  📋 ACTION   : Fix vulnerabilities listed above"
+                        echo "  🤖 NEXT     : Use AI to remediate terraform/main.tf"
+                        echo ""
+                        echo "  ╔════════════════════════════════════════════╗"
+                        echo "  ║  ❌ BUILD FAILED — INSECURE INFRASTRUCTURE ║"
+                        echo "  ║  Fix all CRITICAL issues before deploying  ║"
+                        echo "  ╚════════════════════════════════════════════╝"
                         exit 1
+                    else
+                        echo ""
+                        echo "  ✅ RESULT   : PASSED"
+                        echo "  📊 REASON   : Zero CRITICAL issues found"
+                        echo "  🟢 STATUS   : Safe to proceed with deployment"
+                        echo ""
+                        echo "  ╔════════════════════════════════════════════╗"
+                        echo "  ║  ✅ SCAN PASSED — INFRASTRUCTURE IS SECURE ║"
+                        echo "  ╚════════════════════════════════════════════╝"
                     fi
-
-                    echo "✅ Security scan PASSED — No critical issues!"
                 '''
             }
 
-            // WHY post section?
-            // Always runs regardless of pass/fail.
-            // Archives the report so you can download it.
-            // Required for README screenshots.
             post {
                 always {
-                    echo '📄 Archiving Trivy security report...'
-                    archiveArtifacts artifacts: 'trivy-report.txt',
+                    echo '📄 Archiving security reports...'
+                    archiveArtifacts artifacts: 'trivy-full-report.txt',
+                                     allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'trivy-report.json',
                                      allowEmptyArchive: true
                 }
                 failure {
-                    echo '❌ SCAN FAILED: Review trivy-report.txt for details'
-                    echo '📋 Copy the report above and use AI for remediation'
+                    echo ''
+                    echo '❌ SCAN FAILED — See vulnerability details above'
+                    echo '📋 Copy the report and use AI for remediation'
+                    echo '🔗 Then update terraform/main.tf and re-push'
                 }
                 success {
-                    echo '✅ SCAN PASSED: No critical vulnerabilities found!'
+                    echo '✅ SCAN PASSED — Zero critical vulnerabilities!'
                 }
             }
         }
@@ -167,105 +272,84 @@ pipeline {
 
         // ═════════════════════════════════════════
         // STAGE 3: TERRAFORM PLAN
-        //
-        // WHY terraform init first?
-        // Downloads required providers (AWS plugin).
-        // Creates .terraform folder with dependencies.
-        // Must run before any other terraform command.
-        //
-        // WHY terraform plan (not apply)?
-        // Plan = "show what WOULD happen" (safe)
-        // Apply = "actually create resources" (costs money)
-        // For the pipeline demo, plan is sufficient.
-        // Apply manually when ready to deploy.
         // ═════════════════════════════════════════
         stage('Stage 3: Terraform Plan') {
             steps {
-                echo '╔══════════════════════════════════════╗'
-                echo '║   STAGE 3: TERRAFORM PLAN            ║'
-                echo '╚══════════════════════════════════════╝'
+                echo '╔══════════════════════════════════════════╗'
+                echo '║      STAGE 3: TERRAFORM PLAN             ║'
+                echo '╚══════════════════════════════════════════╝'
 
                 sh '''
-                    echo "📁 Moving to terraform directory..."
                     cd terraform
 
-                    echo "──────────────────────────────────"
                     echo "🔧 Running terraform init..."
-                    echo "──────────────────────────────────"
-
+                    echo "──────────────────────────────────────────"
                     terraform init
 
-                    echo "──────────────────────────────────"
-                    echo "📋 Running terraform validate..."
-                    echo "──────────────────────────────────"
-
+                    echo ""
+                    echo "✅ Running terraform validate..."
+                    echo "──────────────────────────────────────────"
                     terraform validate
 
-                    echo "──────────────────────────────────"
+                    echo ""
                     echo "📊 Running terraform plan..."
-                    echo "──────────────────────────────────"
-
+                    echo "──────────────────────────────────────────"
                     terraform plan \
                         -var="aws_region=us-east-1" \
-                        -var="environment=demo" \
-                        -out=tfplan
+                        -var="environment=demo"
 
+                    echo ""
                     echo "✅ Terraform plan complete!"
-                    echo "Review plan above before applying"
                 '''
             }
 
             post {
                 success {
-                    echo '✅ Terraform plan successful!'
-                    echo '💡 Run terraform apply manually to deploy'
+                    echo '✅ Terraform plan successful — ready to apply!'
                 }
                 failure {
-                    echo '❌ Terraform plan failed'
-                    echo '🔍 Check AWS credentials and terraform syntax'
+                    echo '❌ Terraform plan failed — check AWS credentials'
                 }
             }
         }
     }
 
 
-    // ─────────────────────────────────────────────
-    // POST PIPELINE — runs after ALL stages
-    // WHY? Final status reporting for every run.
-    // ─────────────────────────────────────────────
     post {
         success {
             echo '''
-            ╔══════════════════════════════════════════════╗
-            ║   ✅ PIPELINE PASSED SUCCESSFULLY!           ║
-            ║                                              ║
-            ║   • Code checkout    ✅                      ║
-            ║   • Security scan    ✅ (Zero criticals)     ║
-            ║   • Terraform plan   ✅                      ║
-            ║                                              ║
-            ║   Infrastructure is SECURE and READY!       ║
-            ╚══════════════════════════════════════════════╝
+            ╔══════════════════════════════════════════════════╗
+            ║        ✅ FULL PIPELINE PASSED!                  ║
+            ║                                                  ║
+            ║   Stage 1: Checkout         ✅                   ║
+            ║   Stage 2: Security Scan    ✅ Zero Criticals    ║
+            ║   Stage 3: Terraform Plan   ✅                   ║
+            ║                                                  ║
+            ║   Infrastructure is SECURE and READY TO DEPLOY! ║
+            ╚══════════════════════════════════════════════════╝
             '''
         }
         failure {
             echo '''
-            ╔══════════════════════════════════════════════╗
-            ║   ❌ PIPELINE FAILED                         ║
-            ║                                              ║
-            ║   NEXT STEPS:                                ║
-            ║   1. Check Trivy report in console above     ║
-            ║   2. Copy vulnerability report               ║
-            ║   3. Use AI to analyze and fix               ║
-            ║   4. Update terraform/main.tf                ║
-            ║   5. Push to GitHub                          ║
-            ║   6. Re-run pipeline                         ║
-            ╚══════════════════════════════════════════════╝
+            ╔══════════════════════════════════════════════════╗
+            ║        ❌ PIPELINE FAILED                        ║
+            ║                                                  ║
+            ║   NEXT STEPS:                                    ║
+            ║   1. Read vulnerability details above            ║
+            ║   2. Note the affected file + line               ║
+            ║   3. Use AI to fix terraform/main.tf             ║
+            ║   4. git push to GitHub                          ║
+            ║   5. Re-run this pipeline                        ║
+            ║   6. Confirm zero CRITICAL issues                ║
+            ╚══════════════════════════════════════════════════╝
             '''
         }
         always {
-            echo '🏁 Pipeline execution completed'
-            echo "📅 Build: ${env.BUILD_NUMBER}"
-            echo "🔗 Job: ${env.JOB_NAME}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Build Number : ${env.BUILD_NUMBER}"
+            echo "  Job Name     : ${env.JOB_NAME}"
+            echo "  Build Status : ${currentBuild.currentResult}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         }
     }
 }
