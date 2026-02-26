@@ -10,17 +10,12 @@ pipeline {
 
     stages {
 
-        // ─────────────────────────────────────
-        // STAGE 1: CHECKOUT
-        // ─────────────────────────────────────
         stage('Stage 1: Checkout Code') {
             steps {
                 echo '========================================'
                 echo '   STAGE 1: CHECKOUT SOURCE CODE'
                 echo '========================================'
-
                 checkout scm
-
                 sh '''
                     echo ""
                     echo "Project Files:"
@@ -35,9 +30,6 @@ pipeline {
         }
 
 
-        // ─────────────────────────────────────
-        // STAGE 2: TRIVY SECURITY SCAN
-        // ─────────────────────────────────────
         stage('Stage 2: Trivy IaC Security Scan') {
             steps {
                 echo '========================================'
@@ -47,77 +39,100 @@ pipeline {
                 sh '''
                     echo ""
                     echo "Trivy Version:"
-                    trivy --version
+                    trivy --version | head -1
                     echo ""
                     echo "=================================================="
-                    echo "   SCANNING terraform/ for vulnerabilities..."
+                    echo "   SCANNING terraform/ for vulnerabilities"
                     echo "=================================================="
                     echo ""
 
-                    # Run Trivy table scan - shows human readable output
+                    # ── TABLE SCAN (human readable in console) ──────────
                     trivy config \
                         --severity CRITICAL,HIGH,MEDIUM,LOW \
                         --format table \
                         terraform/ 2>&1 | tee trivy-table-report.txt
 
                     echo ""
-                    echo "=================================================="
 
-                    # Run Trivy JSON scan - for counting
+                    # ── JSON SCAN (for live counting) ────────────────────
                     trivy config \
                         --severity CRITICAL,HIGH,MEDIUM,LOW \
                         --format json \
-                        terraform/ > trivy-json-report.json 2>/dev/null || true
+                        terraform/ 2>/dev/null > trivy-json-report.json || true
 
                     echo ""
                     echo "=================================================="
-                    echo "      LIVE VULNERABILITY COUNT                    "
+                    echo "   LIVE VULNERABILITY COUNT"
+                    echo "   (Changes automatically when you fix issues)"
                     echo "=================================================="
+                    echo ""
 
-                    # Count each severity from JSON output
-                    CRITICAL=$(grep -o '"Severity":"CRITICAL"' trivy-json-report.json | wc -l | tr -d ' ')
-                    HIGH=$(grep -o '"Severity":"HIGH"' trivy-json-report.json | wc -l | tr -d ' ')
-                    MEDIUM=$(grep -o '"Severity":"MEDIUM"' trivy-json-report.json | wc -l | tr -d ' ')
-                    LOW=$(grep -o '"Severity":"LOW"' trivy-json-report.json | wc -l | tr -d ' ')
+                    # ── LIVE COUNT ────────────────────────────────────────
+                    # Read directly from the TABLE report summary line
+                    # Trivy prints: Failures: 7 (LOW: 0, MEDIUM: 1, HIGH: 4, CRITICAL: 2)
+                    # We extract numbers from that exact line
 
+                    SUMMARY_LINE=$(grep "^Failures:" trivy-table-report.txt 2>/dev/null | tail -1)
+
+                    echo "  Raw summary from Trivy: $SUMMARY_LINE"
+                    echo ""
+
+                    if [ -z "$SUMMARY_LINE" ]; then
+                        # No failures line = zero issues
+                        CRITICAL=0
+                        HIGH=0
+                        MEDIUM=0
+                        LOW=0
+                    else
+                        # Extract each count from: Failures: 7 (LOW: 0, MEDIUM: 1, HIGH: 4, CRITICAL: 2)
+                        CRITICAL=$(echo "$SUMMARY_LINE" | grep -o "CRITICAL: [0-9]*" | grep -o "[0-9]*" || echo "0")
+                        HIGH=$(echo "$SUMMARY_LINE" | grep -o "HIGH: [0-9]*" | grep -o "[0-9]*" || echo "0")
+                        MEDIUM=$(echo "$SUMMARY_LINE" | grep -o "MEDIUM: [0-9]*" | grep -o "[0-9]*" || echo "0")
+                        LOW=$(echo "$SUMMARY_LINE" | grep -o "LOW: [0-9]*" | grep -o "[0-9]*" || echo "0")
+                    fi
+
+                    # Default to 0 if empty
                     CRITICAL=${CRITICAL:-0}
                     HIGH=${HIGH:-0}
                     MEDIUM=${MEDIUM:-0}
                     LOW=${LOW:-0}
-
                     TOTAL=$((CRITICAL + HIGH + MEDIUM + LOW))
 
+                    # ── PRINT LIVE COUNT BOX ──────────────────────────────
+                    echo "  +--------------------------------------------+"
+                    echo "  |        LIVE VULNERABILITY SUMMARY          |"
+                    echo "  +--------------------------------------------+"
+                    printf "  |  TOTAL FOUND      :  %-3s                  |\n" "$TOTAL"
+                    echo "  +--------------------------------------------+"
+                    printf "  |  CRITICAL         :  %-3s                  |\n" "$CRITICAL"
+                    printf "  |  HIGH             :  %-3s                  |\n" "$HIGH"
+                    printf "  |  MEDIUM           :  %-3s                  |\n" "$MEDIUM"
+                    printf "  |  LOW              :  %-3s                  |\n" "$LOW"
+                    echo "  +--------------------------------------------+"
+                    echo "  |  Fix an issue -> push -> re-run pipeline   |"
+                    echo "  |  Count will drop automatically each time   |"
+                    echo "  +--------------------------------------------+"
                     echo ""
-                    echo "  +------------------------------------------+"
-                    echo "  |   TOTAL VULNERABILITIES FOUND : $TOTAL    |"
-                    echo "  +------------------------------------------+"
-                    echo "  |  CRITICAL : $CRITICAL issue(s)            |"
-                    echo "  |  HIGH     : $HIGH issue(s)                |"
-                    echo "  |  MEDIUM   : $MEDIUM issue(s)              |"
-                    echo "  |  LOW      : $LOW issue(s)                 |"
-                    echo "  +------------------------------------------+"
-                    echo ""
-                    echo "  NOTE: This count updates automatically."
-                    echo "  Fix a vulnerability -> re-run -> count drops."
-                    echo ""
+
+                    # ── PASS / FAIL DECISION ──────────────────────────────
                     echo "=================================================="
-                    echo "   PIPELINE DECISION                             "
+                    echo "   PIPELINE DECISION"
                     echo "=================================================="
                     echo ""
 
                     if [ "$CRITICAL" -gt 0 ]; then
-                        echo "  STATUS : FAILED"
-                        echo "  REASON : $CRITICAL CRITICAL issue(s) found"
-                        echo "  ACTION : Fix CRITICAL issues in terraform/main.tf"
-                        echo "  NEXT   : Push fix to GitHub and re-run pipeline"
+                        echo "  STATUS  : FAILED"
+                        echo "  REASON  : $CRITICAL CRITICAL issue(s) found"
+                        echo "  POLICY  : Zero CRITICAL tolerance"
+                        echo "  ACTION  : Fix CRITICAL issues in terraform/main.tf"
+                        echo "  NEXT    : git push and re-run pipeline"
                         echo ""
                         echo "  BUILD FAILED - DO NOT DEPLOY"
-                        echo "  Fix issues shown in scan above"
                         exit 1
                     else
-                        echo "  STATUS : PASSED"
-                        echo "  REASON : Zero CRITICAL issues found"
-                        echo "  TOTAL  : $TOTAL remaining issue(s)"
+                        echo "  STATUS  : PASSED"
+                        echo "  REASON  : Zero CRITICAL issues found"
+                        echo "  TOTAL   : $TOTAL remaining issue(s)"
                         echo ""
                         echo "  BUILD PASSED - Safe to proceed"
                     fi
@@ -142,31 +157,23 @@ pipeline {
         }
 
 
-        // ─────────────────────────────────────
-        // STAGE 3: TERRAFORM PLAN
-        // Runs only if Stage 2 passes
-        // ─────────────────────────────────────
         stage('Stage 3: Terraform Plan') {
             steps {
                 echo '========================================'
                 echo '   STAGE 3: TERRAFORM PLAN'
                 echo '========================================'
-
                 sh '''
                     cd terraform
 
                     echo "Running terraform init..."
-                    echo "------------------------------------------"
                     terraform init -no-color
 
                     echo ""
                     echo "Running terraform validate..."
-                    echo "------------------------------------------"
                     terraform validate -no-color
 
                     echo ""
                     echo "Running terraform plan..."
-                    echo "------------------------------------------"
                     terraform plan \
                         -var="aws_region=us-east-1" \
                         -var="environment=demo" \
@@ -176,7 +183,6 @@ pipeline {
                     echo "Terraform plan complete"
                 '''
             }
-
             post {
                 success {
                     echo 'Terraform plan successful'
@@ -194,10 +200,9 @@ pipeline {
             echo '''
             ==========================================
               PIPELINE PASSED
-              Stage 1 Checkout          - OK
-              Stage 2 Trivy Scan        - OK (0 Critical)
-              Stage 3 Terraform Plan    - OK
-              Infrastructure is secure and ready
+              Stage 1 Checkout       - OK
+              Stage 2 Trivy Scan     - OK (0 Critical)
+              Stage 3 Terraform Plan - OK
             ==========================================
             '''
         }
@@ -205,20 +210,17 @@ pipeline {
             echo '''
             ==========================================
               PIPELINE FAILED
-              NEXT STEPS:
               1. Check Stage 2 scan output above
-              2. See exact file and line numbers
-              3. Fix terraform/main.tf in VS Code
-              4. git add . and git commit and git push
-              5. Re-run pipeline
-              6. Count will update automatically
+              2. Fix terraform/main.tf in VS Code
+              3. git add . and git commit and git push
+              4. Re-run pipeline - count updates live
             ==========================================
             '''
         }
         always {
-            echo "Build Number : ${env.BUILD_NUMBER}"
-            echo "Job Name     : ${env.JOB_NAME}"
-            echo "Result       : ${currentBuild.currentResult}"
+            echo "Build   : #${env.BUILD_NUMBER}"
+            echo "Job     : ${env.JOB_NAME}"
+            echo "Result  : ${currentBuild.currentResult}"
         }
     }
 }
