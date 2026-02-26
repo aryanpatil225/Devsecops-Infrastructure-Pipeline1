@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  flask-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # WHY env_file?
+    # Secrets loaded from .env at runtime
+    # .env is gitignored — never reaches GitHub
+    env_file:
+      - .env
+
+    environment:
+      - APP_ENV=production
+      - APP_PORT=5000
+      - APP_VERSION=1.0.0
+
+    ports:
+      - "0.0.0.0:8080:5000"
+
+    # WHY read_only filesystem?
+    # Attacker cannot write malicious files to container
+    # Limits damage if container is compromised
+    read_only: true
+
+    # WHY no-new-privileges?
+    # Prevents process from gaining extra Linux capabilities
+    # Blocks privilege escalation attacks
+    security_opt:
+      - no-new-privileges:true
+
+    # WHY drop ALL capabilities?
+    # Linux capabilities = granular root permissions
+    # Drop everything, add back only what's needed
+    cap_drop:
+      - ALL
+
+    # WHY tmpfs for /tmp?
+    # Filesystem is read_only but app needs /tmp
+    # tmpfs = runs in RAM, auto-cleared when stopped
+    tmpfs:
+      - /tmp
+
+    restart: unless-stopped
+
+    # WHY healthcheck?
+    # Docker monitors app health automatically
+    # Restarts container if health fails
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

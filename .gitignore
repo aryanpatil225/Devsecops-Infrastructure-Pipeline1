@@ -1,0 +1,24 @@
+# Environment files — NEVER commit secrets
+.env
+app/.env
+
+# Terraform state files — contain sensitive data
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/*.tfvars
+terraform/.terraform.lock.hcl
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Mac
+.DS_Store
+
+# Jenkins
+jenkins_home/
+
+# Logs
+*.log
