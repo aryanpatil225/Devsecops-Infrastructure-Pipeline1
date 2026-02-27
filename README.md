@@ -2,6 +2,11 @@
 
 **By Aryan Patil**
 
+### 🌐 Live Application on AWS
+**http://3.85.123.49:5000/**
+
+---
+
 A complete DevSecOps pipeline that automatically scans infrastructure code for security vulnerabilities before deploying to AWS. Built with FastAPI, Docker, Jenkins, Trivy, and Terraform.
 
 ---
