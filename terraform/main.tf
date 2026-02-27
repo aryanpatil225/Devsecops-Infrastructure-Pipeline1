@@ -1,3 +1,166 @@
+# # ═══════════════════════════════════════════════════════════
+# # DEVSECOPS PROJECT — INTENTIONALLY VULNERABLE TERRAFORM
+# # Contains known security flaws for demonstration
+# # DO NOT deploy this to production
+# # ═══════════════════════════════════════════════════════════
+
+# data "aws_ami" "amazon_linux_2" {
+#   most_recent = true
+#   owners      = ["amazon"]
+
+#   filter {
+#     name   = "name"
+#     values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+#   }
+
+#   filter {
+#     name   = "virtualization-type"
+#     values = ["hvm"]
+#   }
+# }
+
+# # VPC — No Flow Logs (AWS-0178 MEDIUM)
+# resource "aws_vpc" "main" {
+#   cidr_block           = var.vpc_cidr
+#   enable_dns_support   = true
+#   enable_dns_hostnames = true
+
+#   tags = {
+#     Name = "${var.project_name}-vpc"
+#   }
+# }
+
+# resource "aws_internet_gateway" "main" {
+#   vpc_id = aws_vpc.main.id
+
+#   tags = {
+#     Name = "${var.project_name}-igw"
+#   }
+# }
+
+# # VULNERABILITY AWS-0164: Auto assigns public IP
+# resource "aws_subnet" "public" {
+#   vpc_id                  = aws_vpc.main.id
+#   cidr_block              = var.public_subnet_cidr
+#   availability_zone       = var.availability_zone
+#   map_public_ip_on_launch = true
+
+#   tags = {
+#     Name = "${var.project_name}-public-subnet"
+#   }
+# }
+
+# resource "aws_route_table" "public" {
+#   vpc_id = aws_vpc.main.id
+
+#   route {
+#     cidr_block = "0.0.0.0/0"
+#     gateway_id = aws_internet_gateway.main.id
+#   }
+
+#   tags = {
+#     Name = "${var.project_name}-public-rt"
+#   }
+# }
+
+# resource "aws_route_table_association" "public" {
+#   subnet_id      = aws_subnet.public.id
+#   route_table_id = aws_route_table.public.id
+# }
+
+# # VULNERABILITY AWS-0107: SSH open to 0.0.0.0/0
+# # VULNERABILITY AWS-0104: Unrestricted egress
+# resource "aws_security_group" "web_sg" {
+#   name        = "${var.project_name}-web-sg"
+#   description = "Security group for web server"
+#   vpc_id      = aws_vpc.main.id
+
+#   ingress {
+#     description = "HTTP"
+#     from_port   = 80
+#     to_port     = 80
+#     protocol    = "tcp"
+#     cidr_blocks = ["0.0.0.0/0"]
+#   }
+
+#   ingress {
+#     description = "Flask App"
+#     from_port   = 5000
+#     to_port     = 5000
+#     protocol    = "tcp"
+#     cidr_blocks = ["0.0.0.0/0"]
+#   }
+
+#   # VULNERABILITY AWS-0107: SSH open to entire internet
+#   ingress {
+#     description = "SSH"
+#     from_port   = 22
+#     to_port     = 22
+#     protocol    = "tcp"
+#     cidr_blocks = ["0.0.0.0/0"]
+#   }
+
+#   # VULNERABILITY AWS-0104: Unrestricted egress
+#   egress {
+#     from_port   = 0
+#     to_port     = 0
+#     protocol    = "-1"
+#     cidr_blocks = ["0.0.0.0/0"]
+#   }
+
+#   tags = {
+#     Name = "${var.project_name}-web-sg"
+#   }
+# }
+
+# resource "aws_iam_role" "ec2_role" {
+#   name = "${var.project_name}-ec2-role"
+
+#   assume_role_policy = jsonencode({
+#     Version = "2012-10-17"
+#     Statement = [{
+#       Action    = "sts:AssumeRole"
+#       Effect    = "Allow"
+#       Principal = { Service = "ec2.amazonaws.com" }
+#     }]
+#   })
+# }
+
+# resource "aws_iam_role_policy_attachment" "ssm_policy" {
+#   role       = aws_iam_role.ec2_role.name
+#   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+# }
+
+# resource "aws_iam_instance_profile" "ec2_profile" {
+#   name = "${var.project_name}-ec2-profile"
+#   role = aws_iam_role.ec2_role.name
+# }
+
+# # VULNERABILITY AWS-0029: Secrets in user_data
+# # VULNERABILITY AWS-0028: IMDSv2 not enforced
+# # VULNERABILITY AWS-0131: EBS not encrypted
+# resource "aws_instance" "web" {
+#   ami                         = data.aws_ami.amazon_linux_2.id
+#   instance_type               = var.instance_type
+#   subnet_id                   = aws_subnet.public.id
+#   vpc_security_group_ids      = [aws_security_group.web_sg.id]
+#   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
+#   associate_public_ip_address = true
+
+#   # VULNERABILITY AWS-0131: EBS not encrypted
+#   root_block_device {
+#     volume_size = 8
+#     volume_type = "gp3"
+#     encrypted   = false
+#   }
+
+#   tags = {
+#     Name = "${var.project_name}-web-server-vulnerable"
+#   }
+# }
+
+
+
 # ═══════════════════════════════════════════════════════════
 # DEVSECOPS PROJECT — FINAL SECURED TERRAFORM
 # All Trivy vulnerabilities fixed
@@ -261,163 +424,3 @@ resource "aws_instance" "web" {
 }
 
 
-# # ═══════════════════════════════════════════════════════════
-# # DEVSECOPS PROJECT — INTENTIONALLY VULNERABLE TERRAFORM
-# # Contains known security flaws for demonstration
-# # DO NOT deploy this to production
-# # ═══════════════════════════════════════════════════════════
-
-# data "aws_ami" "amazon_linux_2" {
-#   most_recent = true
-#   owners      = ["amazon"]
-
-#   filter {
-#     name   = "name"
-#     values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-#   }
-
-#   filter {
-#     name   = "virtualization-type"
-#     values = ["hvm"]
-#   }
-# }
-
-# # VPC — No Flow Logs (AWS-0178 MEDIUM)
-# resource "aws_vpc" "main" {
-#   cidr_block           = var.vpc_cidr
-#   enable_dns_support   = true
-#   enable_dns_hostnames = true
-
-#   tags = {
-#     Name = "${var.project_name}-vpc"
-#   }
-# }
-
-# resource "aws_internet_gateway" "main" {
-#   vpc_id = aws_vpc.main.id
-
-#   tags = {
-#     Name = "${var.project_name}-igw"
-#   }
-# }
-
-# # VULNERABILITY AWS-0164: Auto assigns public IP
-# resource "aws_subnet" "public" {
-#   vpc_id                  = aws_vpc.main.id
-#   cidr_block              = var.public_subnet_cidr
-#   availability_zone       = var.availability_zone
-#   map_public_ip_on_launch = true
-
-#   tags = {
-#     Name = "${var.project_name}-public-subnet"
-#   }
-# }
-
-# resource "aws_route_table" "public" {
-#   vpc_id = aws_vpc.main.id
-
-#   route {
-#     cidr_block = "0.0.0.0/0"
-#     gateway_id = aws_internet_gateway.main.id
-#   }
-
-#   tags = {
-#     Name = "${var.project_name}-public-rt"
-#   }
-# }
-
-# resource "aws_route_table_association" "public" {
-#   subnet_id      = aws_subnet.public.id
-#   route_table_id = aws_route_table.public.id
-# }
-
-# # VULNERABILITY AWS-0107: SSH open to 0.0.0.0/0
-# # VULNERABILITY AWS-0104: Unrestricted egress
-# resource "aws_security_group" "web_sg" {
-#   name        = "${var.project_name}-web-sg"
-#   description = "Security group for web server"
-#   vpc_id      = aws_vpc.main.id
-
-#   ingress {
-#     description = "HTTP"
-#     from_port   = 80
-#     to_port     = 80
-#     protocol    = "tcp"
-#     cidr_blocks = ["0.0.0.0/0"]
-#   }
-
-#   ingress {
-#     description = "Flask App"
-#     from_port   = 5000
-#     to_port     = 5000
-#     protocol    = "tcp"
-#     cidr_blocks = ["0.0.0.0/0"]
-#   }
-
-#   # VULNERABILITY AWS-0107: SSH open to entire internet
-#   ingress {
-#     description = "SSH"
-#     from_port   = 22
-#     to_port     = 22
-#     protocol    = "tcp"
-#     cidr_blocks = ["0.0.0.0/0"]
-#   }
-
-#   # VULNERABILITY AWS-0104: Unrestricted egress
-#   egress {
-#     from_port   = 0
-#     to_port     = 0
-#     protocol    = "-1"
-#     cidr_blocks = ["0.0.0.0/0"]
-#   }
-
-#   tags = {
-#     Name = "${var.project_name}-web-sg"
-#   }
-# }
-
-# resource "aws_iam_role" "ec2_role" {
-#   name = "${var.project_name}-ec2-role"
-
-#   assume_role_policy = jsonencode({
-#     Version = "2012-10-17"
-#     Statement = [{
-#       Action    = "sts:AssumeRole"
-#       Effect    = "Allow"
-#       Principal = { Service = "ec2.amazonaws.com" }
-#     }]
-#   })
-# }
-
-# resource "aws_iam_role_policy_attachment" "ssm_policy" {
-#   role       = aws_iam_role.ec2_role.name
-#   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-# }
-
-# resource "aws_iam_instance_profile" "ec2_profile" {
-#   name = "${var.project_name}-ec2-profile"
-#   role = aws_iam_role.ec2_role.name
-# }
-
-# # VULNERABILITY AWS-0029: Secrets in user_data
-# # VULNERABILITY AWS-0028: IMDSv2 not enforced
-# # VULNERABILITY AWS-0131: EBS not encrypted
-# resource "aws_instance" "web" {
-#   ami                         = data.aws_ami.amazon_linux_2.id
-#   instance_type               = var.instance_type
-#   subnet_id                   = aws_subnet.public.id
-#   vpc_security_group_ids      = [aws_security_group.web_sg.id]
-#   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
-#   associate_public_ip_address = true
-
-#   # VULNERABILITY AWS-0131: EBS not encrypted
-#   root_block_device {
-#     volume_size = 8
-#     volume_type = "gp3"
-#     encrypted   = false
-#   }
-
-#   tags = {
-#     Name = "${var.project_name}-web-server-vulnerable"
-#   }
-# }
